@@ -1,8 +1,8 @@
-// server.js — Express REST API สำหรับ Todo List App
+// server.js — Express REST API สำหรับ Todo List App (PostgreSQL)
 
-const express = require('express');
-const path    = require('path');
-const fs      = require('fs');
+const express  = require('express');
+const path     = require('path');
+const { Pool } = require('pg');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -11,33 +11,41 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─── File store ───────────────────────────────────────────────
-const DB_PATH = path.join(__dirname, 'todos.json');
+// ─── Database ─────────────────────────────────────────────────
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }, // Railway ต้องการ SSL
+});
 
 /**
- * readDB — อ่านข้อมูลจาก todos.json
- * ถ้าไฟล์ยังไม่มี จะสร้างใหม่เป็น { todos: [], nextId: 1 }
- * @returns {{ todos: object[], nextId: number }}
+ * initDB — สร้างตาราง todos ถ้ายังไม่มี
+ * รันครั้งเดียวตอน server เริ่ม
  */
-function readDB() {
-  if (!fs.existsSync(DB_PATH)) {
-    const initial = { todos: [], nextId: 1 };
-    fs.writeFileSync(DB_PATH, JSON.stringify(initial, null, 2), 'utf8');
-    return initial;
-  }
-  const raw = fs.readFileSync(DB_PATH, 'utf8');
-  return JSON.parse(raw);
-}
-
-/**
- * writeDB — บันทึกข้อมูลลง todos.json
- * @param {{ todos: object[], nextId: number }} db
- */
-function writeDB(db) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8');
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS todos (
+      id         SERIAL PRIMARY KEY,
+      text       TEXT        NOT NULL,
+      done       BOOLEAN     NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ
+    )
+  `);
+  console.log('Database ready');
 }
 
 // ─── Helper ───────────────────────────────────────────────────
+
+/** แปลง row จาก PostgreSQL ให้ตรงกับ format ที่ frontend ใช้ */
+function formatTodo(row) {
+  return {
+    id:        row.id,
+    text:      row.text,
+    done:      row.done,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
 
 /** แปลง :id param เป็น integer — คืน NaN ถ้าไม่ใช่ตัวเลข */
 function parseId(param) {
@@ -48,12 +56,17 @@ function parseId(param) {
 
 /**
  * GET /api/todos
- * ดึงรายการ todo ทั้งหมด
+ * ดึงรายการ todo ทั้งหมด เรียงตาม id
  * Response 200: Todo[]
  */
-app.get('/api/todos', (req, res) => {
-  const { todos } = readDB();
-  res.json(todos);
+app.get('/api/todos', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM todos ORDER BY id ASC');
+    res.json(rows.map(formatTodo));
+  } catch (err) {
+    console.error('[GET /api/todos]', err);
+    res.status(500).json({ error: 'Failed to fetch todos' });
+  }
 });
 
 /**
@@ -61,83 +74,89 @@ app.get('/api/todos', (req, res) => {
  * เพิ่ม todo ใหม่
  * Body: { text: string }
  * Response 201: Todo ที่เพิ่งสร้าง
- * Response 400: ถ้า text ว่างหรือไม่ได้ส่งมา
  */
-app.post('/api/todos', (req, res) => {
+app.post('/api/todos', async (req, res) => {
   const { text } = req.body ?? {};
 
   if (typeof text !== 'string' || text.trim() === '') {
     return res.status(400).json({ error: 'text is required and must be a non-empty string' });
   }
 
-  const db   = readDB();
-  const todo = {
-    id:        db.nextId++,
-    text:      text.trim(),
-    done:      false,
-    createdAt: new Date().toISOString(),
-  };
-
-  db.todos.push(todo);
-  writeDB(db);
-  res.status(201).json(todo);
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO todos (text) VALUES ($1) RETURNING *',
+      [text.trim()]
+    );
+    res.status(201).json(formatTodo(rows[0]));
+  } catch (err) {
+    console.error('[POST /api/todos]', err);
+    res.status(500).json({ error: 'Failed to create todo' });
+  }
 });
 
 /**
  * PUT /api/todos/:id
  * Toggle สถานะ done ↔ undone
  * Response 200: Todo ที่อัปเดตแล้ว
- * Response 400: ถ้า id ไม่ใช่ตัวเลข
- * Response 404: ถ้าไม่พบ todo
  */
-app.put('/api/todos/:id', (req, res) => {
+app.put('/api/todos/:id', async (req, res) => {
   const id = parseId(req.params.id);
 
   if (isNaN(id)) {
     return res.status(400).json({ error: 'id must be a number' });
   }
 
-  const db   = readDB();
-  const todo = db.todos.find((t) => t.id === id);
+  try {
+    const { rows } = await pool.query(
+      `UPDATE todos
+          SET done       = NOT done,
+              updated_at = NOW()
+        WHERE id = $1
+      RETURNING *`,
+      [id]
+    );
 
-  if (!todo) {
-    return res.status(404).json({ error: `Todo with id ${id} not found` });
+    if (rows.length === 0) {
+      return res.status(404).json({ error: `Todo with id ${id} not found` });
+    }
+
+    res.json(formatTodo(rows[0]));
+  } catch (err) {
+    console.error('[PUT /api/todos/:id]', err);
+    res.status(500).json({ error: 'Failed to update todo' });
   }
-
-  todo.done      = !todo.done;
-  todo.updatedAt = new Date().toISOString();
-
-  writeDB(db);
-  res.json(todo);
 });
 
 /**
  * DELETE /api/todos/:id
  * ลบ todo ตาม id
  * Response 200: { message, deleted }
- * Response 400: ถ้า id ไม่ใช่ตัวเลข
- * Response 404: ถ้าไม่พบ todo
  */
-app.delete('/api/todos/:id', (req, res) => {
+app.delete('/api/todos/:id', async (req, res) => {
   const id = parseId(req.params.id);
 
   if (isNaN(id)) {
     return res.status(400).json({ error: 'id must be a number' });
   }
 
-  const db    = readDB();
-  const index = db.todos.findIndex((t) => t.id === id);
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM todos WHERE id = $1 RETURNING *',
+      [id]
+    );
 
-  if (index === -1) {
-    return res.status(404).json({ error: `Todo with id ${id} not found` });
+    if (rows.length === 0) {
+      return res.status(404).json({ error: `Todo with id ${id} not found` });
+    }
+
+    res.json({ message: 'Deleted successfully', deleted: formatTodo(rows[0]) });
+  } catch (err) {
+    console.error('[DELETE /api/todos/:id]', err);
+    res.status(500).json({ error: 'Failed to delete todo' });
   }
-
-  const [deleted] = db.todos.splice(index, 1);
-  writeDB(db);
-  res.json({ message: 'Deleted successfully', deleted });
 });
 
-// ─── 404 handler สำหรับ route ที่ไม่มี ────────────────────────
+// ─── 404 handler ──────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: `Route ${req.method} ${req.path} not found` });
 });
@@ -152,6 +171,13 @@ app.use((err, req, res, _next) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-});
+initDB()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running at http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to connect to database:', err);
+    process.exit(1);
+  });
