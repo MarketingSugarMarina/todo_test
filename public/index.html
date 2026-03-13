@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Todo List App</title>
+    <style>
+      /* ===== Reset & Base ===== */
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #f0f2f5;
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        padding: 40px 16px;
+      }
+
+      /* ===== Container ===== */
+      .container {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        padding: 32px;
+        width: 100%;
+        max-width: 540px;
+        height: fit-content;
+      }
+
+      h1 {
+        font-size: 1.8rem;
+        color: #1a1a2e;
+        margin-bottom: 24px;
+        text-align: center;
+      }
+
+      /* ===== Input Form ===== */
+      .input-row {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 24px;
+      }
+
+      #todo-input {
+        flex: 1;
+        padding: 10px 14px;
+        border: 2px solid #ddd;
+        border-radius: 8px;
+        font-size: 1rem;
+        outline: none;
+        transition: border-color 0.2s;
+      }
+
+      #todo-input:focus {
+        border-color: #6c63ff;
+      }
+
+      #add-btn {
+        padding: 10px 20px;
+        background: #6c63ff;
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      #add-btn:hover {
+        background: #574fd6;
+      }
+
+      /* ===== Filter Buttons ===== */
+      .filters {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+
+      .filter-btn {
+        flex: 1;
+        padding: 7px;
+        border: 2px solid #ddd;
+        border-radius: 8px;
+        background: #fff;
+        cursor: pointer;
+        font-size: 0.85rem;
+        transition: all 0.2s;
+      }
+
+      .filter-btn.active {
+        border-color: #6c63ff;
+        color: #6c63ff;
+        font-weight: 600;
+      }
+
+      /* ===== Todo List ===== */
+      #todo-list {
+        list-style: none;
+      }
+
+      /* แต่ละรายการ */
+      .todo-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 10px;
+        border-bottom: 1px solid #f0f0f0;
+        transition: background 0.15s;
+      }
+
+      .todo-item:hover {
+        background: #fafafa;
+      }
+
+      /* Checkbox กลม */
+      .todo-item input[type='checkbox'] {
+        width: 18px;
+        height: 18px;
+        accent-color: #6c63ff;
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+
+      /* ข้อความงาน */
+      .todo-text {
+        flex: 1;
+        font-size: 1rem;
+        color: #333;
+        word-break: break-word;
+      }
+
+      /* ขีดทับเมื่อเสร็จแล้ว */
+      .todo-item.completed .todo-text {
+        text-decoration: line-through;
+        color: #aaa;
+      }
+
+      /* ปุ่มลบ */
+      .delete-btn {
+        background: none;
+        border: none;
+        color: #ccc;
+        font-size: 1.2rem;
+        cursor: pointer;
+        line-height: 1;
+        transition: color 0.2s;
+        flex-shrink: 0;
+      }
+
+      .delete-btn:hover {
+        color: #e74c3c;
+      }
+
+      /* ===== Empty State ===== */
+      .empty-msg {
+        text-align: center;
+        color: #bbb;
+        padding: 32px 0;
+        font-size: 0.95rem;
+      }
+
+      /* ===== Footer count ===== */
+      .footer {
+        margin-top: 16px;
+        font-size: 0.85rem;
+        color: #999;
+        text-align: right;
+      }
+
+      /* ===== Error message ===== */
+      .error-msg {
+        color: #e74c3c;
+        font-size: 0.85rem;
+        margin-top: -16px;
+        margin-bottom: 12px;
+        min-height: 18px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>📝 Todo List</h1>
+
+      <!-- ฟอร์มเพิ่มงานใหม่ -->
+      <div class="input-row">
+        <input
+          type="text"
+          id="todo-input"
+          placeholder="พิมพ์งานที่ต้องทำ..."
+          maxlength="200"
+          autocomplete="off"
+        />
+        <button id="add-btn">เพิ่ม</button>
+      </div>
+      <!-- แสดง error ถ้ากรอกข้อมูลไม่ครบ -->
+      <p class="error-msg" id="error-msg"></p>
+
+      <!-- ปุ่ม Filter -->
+      <div class="filters">
+        <button class="filter-btn active" data-filter="all">ทั้งหมด</button>
+        <button class="filter-btn" data-filter="active">ยังไม่เสร็จ</button>
+        <button class="filter-btn" data-filter="completed">เสร็จแล้ว</button>
+      </div>
+
+      <!-- รายการ Todo -->
+      <ul id="todo-list"></ul>
+
+      <!-- จำนวนงานที่เหลือ -->
+      <p class="footer" id="footer-count"></p>
+    </div>
+
+    <!-- โหลด JavaScript หลังจาก HTML พร้อม -->
+    <script src="app.js"></script>
+  </body>
+</html>
