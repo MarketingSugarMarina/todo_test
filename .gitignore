@@ -11,6 +11,9 @@ logs/
 *.log
 npm-debug.log*
 
+# Data file (generated at runtime)
+todos.json
+
 # OS files
 .DS_Store
 Thumbs.db
